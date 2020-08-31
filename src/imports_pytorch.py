@@ -45,6 +45,14 @@ d_model = 128
 dff = 512
 num_heads = 8
 
-input_vocab_size = tokenizer_pt.vocab_size + 2
-target_vocab_size = tokenizer_en.vocab_size + 2
+# input_vocab_size = tokenizer_pt.vocab_size + 2
+# target_vocab_size = tokenizer_en.vocab_size + 2
 dropout_rate = 0.1
+
+
+if torch.cuda.is_available():
+    device = torch.device("cuda:0")  # you can continue going on here, like cuda:1 cuda:2....etc. 
+    print("Running on the GPU")
+else:
+    device = torch.device("cpu")
+    print("Running on the CPU")

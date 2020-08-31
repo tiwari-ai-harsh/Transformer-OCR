@@ -1,40 +1,43 @@
 from imports_pytorch import *
 
 class ConvEncoderLayer(nn.Module):
-    def __init__(self):
+    def __init__(self, d_model):
         super(ConvEncoderLayer, self).__init__()
         res50_model = models.resnet50(pretrained=True)
-        print(res50_model)
-        print(*list(res50_model.children())[-3])
+        # print(res50_model)
+        # print(*list(res50_model.children())[-3])
         self.res50_conv  = nn.Sequential(*list(res50_model.children())[:-4])
+        self.fcc         = nn.Linear(512, d_model)
         # self.conv2       = nn.Conv2d(1024, 512, kernel_size=1)
 
     def forward(self, x):
         x = self.res50_conv(x)
         # x = self.conv2(x)
-        print(x.size())
+        # print(x.size())
         x = x.view(x.size()[0], 512, -1)
-        print(x.size())
+        x = torch.transpose(x, 1, 2)
+        x = self.fcc(x)
+        # print(x.size())
         return x
 
 
 ## Transformers
 
 def get_angles(pos, i, d_model):
-    angles_rates = 1 / np.power(10000, (2*(i//2))/np.float32(d_model))
+    angles_rates = torch.true_divide(1, torch.pow(10000, torch.true_divide((2*(torch.true_divide(i,2))), (d_model))))
     return pos * angles_rates
 
 def positional_encoding(position, d_model):
-    angles_rads = get_angles(np.arange(position)[:, np.newaxis],
-                            np.arange(d_model)[np.newaxis, :],
+    angles_rads = get_angles(torch.arange(position)[:, None],
+                            torch.arange(d_model)[None, :],
                             d_model)
-    angles_rads[:, 0::2] = np.sin(angles_rads[:, 0::2])
+    angles_rads[:, 0::2] = torch.sin(angles_rads[:, 0::2])
 
-    angles_rads[:, 1::2] = np.cos(angles_rads[:, 1::2])
+    angles_rads[:, 1::2] = torch.cos(angles_rads[:, 1::2])
 
-    pos_encoding = angles_rads[np.newaxis, ...]
+    pos_encoding = angles_rads[None, ...]
 
-    return torch.tensor(pos_encoding).to(torch.float32)
+    return pos_encoding
 
 def create_padding_mask(seq):
     seq = (seq == 0).to(torch.float32)
@@ -166,23 +169,25 @@ class DecoderLayer(nn.Module):
 
 
 class Encoder(nn.Module):
-    def __init__(self, num_layers, d_model, num_heads, dff, input_vocab_size, maximum_position_encoding, rate=0.1):
+    def __init__(self, num_layers, d_model, num_heads, dff, maximum_position_encoding, rate=0.1):
         super(Encoder, self).__init__()
-
         self.d_model = torch.tensor(d_model).to(torch.float32)
         self.num_layers = num_layers
 
-        self.embedding = nn.Embedding(input_vocab_size, d_model)
-        self.pos_encoding = positional_encoding(maximum_position_encoding, self.d_model)
-        self.enc_layers = [EncoderLayer(d_model, d_model, num_heads, dff, rate) for _ in range(num_layers)]
+        self.net       = ConvEncoderLayer(d_model)
+        self.pos_encoding = positional_encoding(maximum_position_encoding, self.d_model).to(device)
+        self.enc_layers = [EncoderLayer(d_model, d_model, num_heads, dff, rate).to(device) for _ in range(num_layers)]
         self.dropout    = nn.Dropout(rate)
 
     def forward(self, x, mask):
-        seq_len = x.shape[1]
-
-        x = self.embedding(x)
-        print(x.shape)
+        x = self.net(x)
+        # print(x.shape)
+        # x = self.embedding(x)
+        # print(x.shape)
         x *= torch.sqrt(self.d_model)
+        seq_len = x.shape[1]
+        print(torch.cuda.get_device_name(x.get_device()))
+        print(torch.cuda.get_device_name(self.pos_encoding.get_device()))
         x += self.pos_encoding[:, :seq_len, :]
         
         x = self.dropout(x)
@@ -198,8 +203,8 @@ class Decoder(nn.Module):
         self.d_model    = torch.tensor(d_model).to(torch.float32)
         self.num_layers = num_layers
         self.embedding  = nn.Embedding(target_vocab_size, d_model)
-        self.pos_encoding = positional_encoding(maximum_position_encoding, d_model)
-        self.dec_layers   = [DecoderLayer(d_model, d_model, num_heads, dff, rate) for _ in range(num_layers)]
+        self.pos_encoding = positional_encoding(maximum_position_encoding, self.d_model).to(device)
+        self.dec_layers   = [DecoderLayer(d_model, d_model, num_heads, dff, rate).to(device) for _ in range(num_layers)]
         self.dropout      = nn.Dropout(rate)
 
     def forward(self, x, enc_output, look_ahead_mask, padding_mask):
@@ -218,20 +223,23 @@ class Decoder(nn.Module):
         return x, attention_weight
 
 class Transformer(nn.Module):
-    def __init__(self, num_layers, d_model, num_heads, dff, input_vocab_size, target_vocab_size, pe_input, pe_target, rate=0.1):
+    def __init__(self, num_layers, d_model, num_heads, dff, target_vocab_size, pe_input, pe_target, rate=0.1):
         super(Transformer, self).__init__()
-
-        self.encoder = Encoder(num_layers, d_model, num_heads, dff, input_vocab_size, pe_input, rate)
+        self.encoder = Encoder(num_layers, d_model, num_heads, dff, pe_input, rate)
         self.decoder = Decoder(num_layers, d_model, num_heads, dff, target_vocab_size, pe_target, rate)
         self.final_layer = nn.Linear(d_model, target_vocab_size)
+
+
     def forward(self, inp, tar, enc_padding_mask, look_ahead_mask, dec_padding_mask):
         enc_output = self.encoder(inp, enc_padding_mask)
         dec_output, attention_weights = self.decoder(tar, enc_output, look_ahead_mask, dec_padding_mask)
         final_output = self.final_layer(dec_output)
         return final_output, attention_weights
+    
 if __name__ == "__main__":
     # net = ConvEncoderLayer()
-    # net(torch.zeros((1, 3, 32, 112)))
+    # print(net(torch.zeros((1, 3, 32, 112))).shape)
+    # print(net(torch.zeros((1, 3, 32, 112))).shape)
     # pos_encoding = positional_encoding(50, 512)
     # print(pos_encoding.shape)
     # x = torch.tensor([[7, 6, 0, 0, 1], [1, 2, 3, 0, 0], [0, 0, 0, 4, 5]])
@@ -269,37 +277,37 @@ if __name__ == "__main__":
     # sample_encoder_layer_output = sample_decoder_layer(
     #     torch.zeros((64, 50, 512)), sample_encoder_layer_output,None, None)
     # print(sample_encoder_layer_output.shape)  # (batch_size, input_seq_len, d_model)
-    # sample_encoder = Encoder(num_layers=2, d_model=512, num_heads=8, 
-    #                      dff=2048, input_vocab_size=8500,
-    #                      maximum_position_encoding=10000)
+    sample_encoder = Encoder(num_layers=2, d_model=512, num_heads=8, 
+                         dff=2048, maximum_position_encoding=10000).to(device)
 
-    # temp_input =  ((torch.rand(64,62)*100)%100).to(dtype=torch.long)
-    # # tf.random.uniform((64, 62), dtype=tf.int64, minval=0, maxval=200)
+    temp_input =  ((torch.rand(4, 3, 32, 112)*100)%100).to(device)
+    # tf.random.uniform((64, 62), dtype=tf.int64, minval=0, maxval=200)
 
-    # sample_encoder_output = sample_encoder(temp_input, mask=None)
+    sample_encoder_output = sample_encoder(temp_input, mask=None)
+    print("**"*10,"Encoder","**"*10, "\n", sample_encoder_output.shape)
 
-    # sample_decoder = Decoder(num_layers=2, d_model=512, num_heads=8, 
-    #                         dff=2048, target_vocab_size=8000,
-    #                         maximum_position_encoding=5000)
+    sample_decoder = Decoder(num_layers=2, d_model=512, num_heads=8, 
+                            dff=2048, target_vocab_size=8000,
+                            maximum_position_encoding=5000).to(device)
 
 
-    # temp_input =  ((torch.rand(64,26)*100)%100).to(dtype=torch.long)
-    # output, attn = sample_decoder(temp_input, 
-    #                             enc_output=sample_encoder_output, 
-    #                             look_ahead_mask=None, 
-    #                             padding_mask=None)
+    temp_target =  ((torch.rand(4,28)*100)%100).to(dtype=torch.long).to(device)
+    output, attn = sample_decoder(temp_target, 
+                                enc_output=sample_encoder_output, 
+                                look_ahead_mask=None, 
+                                padding_mask=None)
+    print(output.shape)
 
     # output.shape, attn['decoder_layer2_block2'].shape
     # print (sample_encoder_output.shape)  # (batch_size, input_seq_len, d_model)
 
 
-    sample_transformer = Transformer(
-    num_layers=2, d_model=512, num_heads=8, dff=2048, 
-    input_vocab_size=8500, target_vocab_size=8000, 
-    pe_input=10000, pe_target=6000)
+    sample_transformer = Transformer(num_layers=2, d_model=512, num_heads=8, dff=2048, 
+                                    target_vocab_size=8000, 
+                                    pe_input=10000, pe_target=6000).to(device)
 
-    temp_input =  ((torch.rand(64,38)*100)%100).to(dtype=torch.long)
-    temp_target =  ((torch.rand(64,36)*100)%100).to(dtype=torch.long)
+    # temp_input =  ((torch.rand(64,38)*100)%100).to(dtype=torch.long)
+    # temp_target =  ((torch.rand(64,36)*100)%100).to(dtype=torch.long)
     # temp_input = tf.random.uniform((64, 38), dtype=tf.int64, minval=0, maxval=200)
     # temp_target = tf.random.uniform((64, 36), dtype=tf.int64, minval=0, maxval=200)
 

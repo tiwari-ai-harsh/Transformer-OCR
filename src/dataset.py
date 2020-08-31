@@ -38,7 +38,7 @@ class WordDataset(Dataset):
 
         if self.transform:
             img = self.transform(img)
-        print(self._tensor_to_word(label))
+        # print(self._tensor_to_word(label))
         return img, torch.tensor(label)
 
     def _tensor_to_word(self, tensor):

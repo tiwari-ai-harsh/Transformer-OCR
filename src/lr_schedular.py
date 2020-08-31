@@ -1,4 +1,5 @@
-
+from torch.optim.lr_scheduler import _LRScheduler
+from imports_pytorch import *
 
 class CoustomLR(_LRScheduler):
 
@@ -13,7 +14,7 @@ class CoustomLR(_LRScheduler):
                           "please use `get_last_lr()`.", UserWarning)
 
 
-        if (self.last_epoch == 0) or (self.last_epoch %self.warmup_steps!=0):
+        if (self.last_epoch == 0):
             return [group['lr'] for group in self.optimizer.param_groups]
 
         arg1 = torch.rsqrt(self.last_epoch)
